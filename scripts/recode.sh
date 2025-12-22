@@ -10,15 +10,27 @@
 ## This script should only be applied to transform AVI files. Anything
 ## else does not require this transform
 
-FILENAME=$1
-OUTPUT=$2
+INROOT=$1
+OUTROOT=$2
+FILENAME=$3
+
+## Make sure the output directory exists
+
+INFILE="${INROOT}/${FILENAME}"
+OUTFILE="${OUTROOT}/${FILENAME}"
+OUTDIR="$(dirname "$OUTFILE")"
+
+mkdir -p "${OUTDIR}"
 
 ## Pull apart the streams
-gpac -i "$FILENAME" -o "${FILENAME}.pcm" -o "${FILENAME}.h264"
+gpac -i "${INFILE}" -o "${OUTFILE}.pcm" -o "${OUTFILE}.h264"
 
-## mux them back
+## mux them back, encoding the audio
 ffmpeg -y \
-  -f s16le -ar 16000 -ac 1 -i "${FILENAME}.pcm" \
-  -i "${FILENAME}.h264" \
+  -f s16le -ar 16000 -ac 1 -i "${OUTFILE}.pcm" \
+  -i "${OUTFILE}.h264" \
   -c:v copy -c:a aac \
-  "$OUTPUT"
+  "${OUTFILE}"
+
+## and remove the temporary files
+rm "${OUTFILE}.pcm" "${OUTFILE}.h264"
