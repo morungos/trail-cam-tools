@@ -25,76 +25,83 @@ echo "SCRIPT_DIR" $SCRIPT_DIR
 ## correct, and not depending on whether or not the original file times
 ## were sound.
 
-update_video_timestamps(){
-  INFILE=$1
-  OUTFILE=$2
+# update_video_timestamps(){
+#   INFILE=$1
+#   OUTFILE=$2
 
-  # extract the modification time, which seems correct, and reformat to UTC rfc-3339
-  MTIME_UTC=`stat --format "%Y" "${INFILE}"`
-  FORMATTED_MTIME_UTC=`date --rfc-3339=seconds -u -d "@${MTIME_UTC}"`
+#   # extract the modification time, which seems correct, and reformat to UTC rfc-3339
+#   MTIME_UTC=`stat --format "%Y" "${INFILE}"`
+#   FORMATTED_MTIME_UTC=`date --rfc-3339=seconds -u -d "@${MTIME_UTC}"`
 
-  TAG_MTIME_UTC_I1="${FORMATTED_MTIME_UTC//-/:}"
-  TAG_MTIME_UTC="${TAG_MTIME_UTC_I1/%+00:00/:}"
+#   TAG_MTIME_UTC_I1="${FORMATTED_MTIME_UTC//-/:}"
+#   TAG_MTIME_UTC="${TAG_MTIME_UTC_I1/%+00:00/:}"
 
-  exiftool -overwrite_original -api QuickTimeUTC=1 -tagsFromFile "${INFILE}" \
-    '-OffsetTimeOriginal=+00:00' \
-    '-OffsetTimeDigitized=+00:00' \
-    "-DateTimeOriginal=${TAG_MTIME_UTC}" \
-    "-CreateDate=${TAG_MTIME_UTC}" \
-    "-MediaCreateDate=${TAG_MTIME_UTC}" \
-    "-TrackCreateDate=${TAG_MTIME_UTC}" \
-    "-ModifyDate=${TAG_MTIME_UTC}" \
-    "-MediaModifyDate=${TAG_MTIME_UTC}" \
-    "-TrackModifyDate=${TAG_MTIME_UTC}" \
-    "${OUTFILE}"
-}
+#   exiftool -overwrite_original -api QuickTimeUTC=1 -tagsFromFile "${INFILE}" \
+#     '-OffsetTimeOriginal=+00:00' \
+#     '-OffsetTimeDigitized=+00:00' \
+#     "-DateTimeOriginal=${TAG_MTIME_UTC}" \
+#     "-CreateDate=${TAG_MTIME_UTC}" \
+#     "-MediaCreateDate=${TAG_MTIME_UTC}" \
+#     "-TrackCreateDate=${TAG_MTIME_UTC}" \
+#     "-ModifyDate=${TAG_MTIME_UTC}" \
+#     "-MediaModifyDate=${TAG_MTIME_UTC}" \
+#     "-TrackModifyDate=${TAG_MTIME_UTC}" \
+#     "${OUTFILE}"
+# }
 
 ## Reads the timestamp from the image, which should be interpreted as local time
 ## although we may or may not handle daylight savings.
 
-get_timestamp() {
+update_timestamps(){
   FILENAME=$1
+  OUTFILE=$2
+  FILE_TYPE=$3
 
-  IMAGE_TEXT=`osascript $SCRIPT_DIR/get-image-text.applescript "$FILENAME"`
-  echo "Image file data:" $IMAGE_TEXT
+  IMAGE_FILE="$FILENAME"
+
+  set -x
+
+  if [[ "${INFILE_TYPE}" == "video/x-msvideo" ]]; then
+    echo ffmpeg -y -i "$OUTFILE" -vframes 1 -f image2 /tmp/text-keyframe.jpg
+    ffmpeg -y -i "$OUTFILE" -vframes 1 -f image2 /tmp/text-keyframe.jpg
+    IMAGE_FILE=/tmp/text-keyframe.jpg
+  fi
+
+  IMAGE_TEXT=`osascript $SCRIPT_DIR/get-image-text.applescript "$IMAGE_FILE"`
+  IMAGE_TEXT=$(echo $IMAGE_TEXT)    ## change newlines to spaces
+  echo "Image file data: <${IMAGE_TEXT@Q}>"
 
   DATE_REGEX='([0-3][0-9])/([0-1][0-9])/([2][0-9][0-9][0-9]) ([0-2][0-9]):([0-5][0-9]):([0-5][0-9])'
 
-  if [[ $IMAGE_TEXT =~ $DATE_REGEX ]]; then
-    echo "Date: ${BASH_REMATCH[1]}/${BASH_REMATCH[2]}/${BASH_REMATCH[3]}"
+  if [[ "$IMAGE_TEXT" =~ $DATE_REGEX ]]; then
+    LOCAL_DATE="${BASH_REMATCH[3]}-${BASH_REMATCH[2]}-${BASH_REMATCH[1]}T${BASH_REMATCH[4]}:${BASH_REMATCH[5]}:${BASH_REMATCH[6]}"
+    echo "LOCAL_DATE:" $LOCAL_DATE
+
+    FORMATTED_UTC_DATE=`date -j -z UTC -f %Y-%m-%dT%H:%M:%S ${LOCAL_DATE} +%Y:%m:%dT%H:%M:%S%z`
+    FORMATTED_LOCAL_DATE=`date -j -f %Y-%m-%dT%H:%M:%S ${LOCAL_DATE} +%Y:%m:%dT%H:%M:%S%z`
+    FORMATTED_LOCAL_OFFSET=`date -j -f %Y-%m-%dT%H:%M:%S ${LOCAL_DATE} +%z`
+
+    FORMATTED_UTC_DATE="${FORMATTED_UTC_DATE:0:-2}:${FORMATTED_UTC_DATE: -2}"
+    FORMATTED_LOCAL_DATE="${FORMATTED_LOCAL_DATE:0:-2}:${FORMATTED_LOCAL_DATE: -2}"
+    FORMATTED_LOCAL_OFFSET="${FORMATTED_LOCAL_OFFSET:0:-2}:${FORMATTED_LOCAL_OFFSET: -2}"
   else
-    echo "No match"
+    echo "FAILED TO READ A TIME, FOR:" $IMAGE_TEXT
+    return
   fi
-}
 
-update_image_timestamps(){
-  INFILE=$1
-  OUTFILE=$2
+  echo exiftool -overwrite_original -Make="Trail Camera" -Model="SV-TCZ23LSW" -AllDates="${FORMATTED_LOCAL_DATE}" -EXIF:OffsetTime*="$FORMATTED_LOCAL_OFFSET}" "${OUTFILE}"
+  exiftool -overwrite_original -Make="Trail Camera" -Model="SV-TCZ23LSW" -AllDates="${FORMATTED_LOCAL_DATE}" -EXIF:OffsetTime*="$FORMATTED_LOCAL_OFFSET}" "${OUTFILE}"
 
-  # we really want to get text from the file
-  # IMAGE_TEXT=`osascript $SCRIPT_DIR/get-image-text.applescript "$INFILE"`
-  # echo "Image file data:" $IMAGE_TEXT
+  ## For images, that's enough
+  ##
+  ## Videos are much less simple: offsets are not handled at all the same way, on a Mac anyways
+  ## Also, with videos, we need to get a temporary JPEG for the first keyframe to use for the
+  ## text analysis.
 
-  get_timestamp "${INFILE}"
-
-  # # extract the modification time, which seems correct, and reformat to UTC rfc-3339
-  # MTIME_UTC=`stat --format "%Y" "${INFILE}"`
-  # FORMATTED_MTIME_UTC=`date --rfc-3339=seconds -u -d "@${MTIME_UTC}"`
-
-  # TAG_MTIME_UTC_I1="${FORMATTED_MTIME_UTC//-/:}"
-  # TAG_MTIME_UTC="${TAG_MTIME_UTC_I1/%+00:00/:}"
-
-  # exiftool -overwrite_original -api QuickTimeUTC=1 -tagsFromFile "${INFILE}" \
-  #   '-OffsetTimeOriginal=+00:00' \
-  #   '-OffsetTimeDigitized=+00:00' \
-  #   "-DateTimeOriginal=${TAG_MTIME_UTC}" \
-  #   "-CreateDate=${TAG_MTIME_UTC}" \
-  #   "-MediaCreateDate=${TAG_MTIME_UTC}" \
-  #   "-TrackCreateDate=${TAG_MTIME_UTC}" \
-  #   "-ModifyDate=${TAG_MTIME_UTC}" \
-  #   "-MediaModifyDate=${TAG_MTIME_UTC}" \
-  #   "-TrackModifyDate=${TAG_MTIME_UTC}" \
-  #   "${OUTFILE}"
+  if [[ "${INFILE_TYPE}" == "video/x-msvideo" ]]; then
+    echo exiftool -overwrite_original -api QuickTimeUTC '-QuickTime:CreationDate<$CreateDate' "${OUTFILE}"
+    exiftool -overwrite_original -api QuickTimeUTC '-QuickTime:CreationDate<$CreateDate' "${OUTFILE}"
+  fi
 }
 
 recode_file(){
@@ -119,24 +126,21 @@ recode_file(){
     mkdir -p "${OUTDIR}"
     echo "Copying: $INROOT/${INFILE} to ${OUTFILE}"
     cp "$INROOT/${INFILE}" "${OUTFILE}"
-    update_image_timestamps "$INROOT/${INFILE}" "${OUTFILE}"
+    update_timestamps "$INROOT/${INFILE}" "${OUTFILE}"
     return
   fi
 
-  return
-
   ## AVI files, extract the audio and video and re-multiplex
   if [[ "${INFILE_TYPE}" == "video/x-msvideo" ]]; then
-    return
-    OUTFILE="${OUTROOT}/${FILENAME%.*}.MP4"
+    OUTFILE="${OUTROOT}/${INFILE%.*}.MP4"
     OUTDIR="$(dirname "$OUTFILE")"
 
-    echo "Re-muxing video: ${INFILE} to ${OUTFILE}"
+    echo "Re-muxing video: $INROOT/${INFILE} to ${OUTFILE}"
 
     mkdir -p "${OUTDIR}"
 
     ## Pull apart the streams
-    gpac -i "${INFILE}" -o "${OUTFILE}.pcm" -o "${OUTFILE}.h264"
+    gpac -i "$INROOT/${INFILE}" -o "${OUTFILE}.pcm" -o "${OUTFILE}.h264"
 
     ## mux them back, encoding the audio
     ffmpeg -y \
@@ -148,15 +152,14 @@ recode_file(){
     ## and remove the temporary files
     rm "${OUTFILE}.pcm" 
     rm "${OUTFILE}.h264"
-    update_video_timestamps "${INFILE}" "${OUTFILE}"
+    update_timestamps "$INROOT/${INFILE}" "${OUTFILE}" "${INFILE_TYPE}"
     return
   fi
 }
 
 export -f get_timestamp
 export -f recode_file
-export -f update_video_timestamps
-export -f update_image_timestamps
+export -f update_timestamps
 export SCRIPT_DIR
 export INROOT
 export OUTROOT
