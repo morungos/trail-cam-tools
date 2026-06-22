@@ -32,6 +32,26 @@ function makeContext(): Context {
     };
 }
 
+async function getFileKey(ctx: Context, file: string, type: string) {
+
+}
+
+async function syncFile(ctx: Context, resolved: string, type: string) {
+    switch(type) {
+        case "image/jpeg":
+            logger.info("Found JPEG image", resolved)
+            break
+
+        case "video/x-msvideo":
+            logger.info("Found AVI video", resolved)
+            break
+
+        default:
+            logger.warn("Ignoring file:", resolved)
+            break
+    }
+}
+
 // The main top level function, which iterates through directories 
 // searching for data.
 async function processContent(ctx: Context, source: string) {
@@ -50,25 +70,10 @@ async function processContent(ctx: Context, source: string) {
             continue
         }
         const extension = path.extname(entry.name)
-        const type = mime.lookup(extension);
+        const type = mime.lookup(extension) || "application/octet-stream";
         const resolved = path.join(entry.parentPath, entry.name);
 
-        switch(type) {
-            case "image/jpeg":
-            case "image/png":
-            case "image/gif":
-            case "image/webp":
-                logger.info("Found image", resolved)
-                break
-
-            case "video/mp4":
-                logger.info("Found MP4 video", resolved)
-                break
-
-            default:
-                logger.info("Ignoring:", entry, type)
-                break
-        }
+        await syncFile(ctx, resolved, type)
     }
 }
 
