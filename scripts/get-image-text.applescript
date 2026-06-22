@@ -1,6 +1,8 @@
 -- Command line version
 -- usage:
 -- osascript extract_text_from_image_live_text_ocr.applescript ~/Desktop/test/*.gif
+--
+-- Not fantasically accurate when the background bleeds through the bottom banner.
 
 use framework "Vision"
 use framework "Foundation"
@@ -41,6 +43,8 @@ on run argv
 	
 	-- Initialize text request
 	set theRequest to current application's VNRecognizeTextRequest's alloc()'s init()
+	set theRequest's usesLanguageCorrection to false
+	set theRequest's recognitionLevel to "accurate"
 	
 	-- Perform the request and get the results
 	(requestHandler's performRequests:(current application's NSArray's arrayWithObject:(theRequest)) |error|:(missing value))
