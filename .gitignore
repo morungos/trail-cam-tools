@@ -1,2 +1,3 @@
 *.onnx
 /node_modules
+/.text-cache
