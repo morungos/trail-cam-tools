@@ -1,0 +1,26 @@
+{
+  "name": "trail-cam-tools",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "sync": "ts-node ./src/sync.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": {
+    "name": "Stuart Watt",
+    "email": "morungos@gmail.com"
+  },
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@11.8.0",
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^26.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "mime-types": "^3.0.2"
+  }
+}
