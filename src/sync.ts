@@ -37,8 +37,8 @@ function makeContext(): Context {
         config: {
             source: program.args[0],
             target: program.args[1],
-            cache: cache
-        }
+        },
+        cache: cache
     };
 }
 
@@ -52,7 +52,7 @@ async function remux(file: string): Promise<string> {
     const video = await tmpName({ postfix: '.h264'})
     const mp4 = await tmpName({ postfix: '.mp4'})
     await exec("gpac", ["-i", file, "-o", audio, "-o", video])
-    await exec("ffmpeg", ["-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
+    await exec("ffmpeg", ["-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-r", "25", "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
 
     // remove the image scratch file
     await fs.rm(audio)
@@ -79,22 +79,52 @@ async function getImageText(ctx: Context, file: string) {
     let match;
 
     if ((match = /([0-3][0-9])\/([0-1][0-9])\/(2[0-9][0-9][0-9])(?:\n|[: ])+([0-2][0-9])\:([0-5][0-9])\:([0-5][0-9])/s.exec(text))) {
-        return `${ match[3] }-${ match[1] }-${ match[1] }T${ match[4] }-${ match[5] }-${ match[6] }`
+        return `${ match[3] }-${ match[2] }-${ match[1] }T${ match[4] }-${ match[5] }-${ match[6] }`
     }
 
     logger.warn("match fail:", text)
     process.exit(1)
 }
 
+function getRelativeTargetFile(time: string, type: string) {
+    switch(type) {
+        case "image/jpeg":
+            return path.join(time.substring(0, 4), time.substring(0, 10), time + ".jpg")
+        case "video/x-msvideo":
+            return path.join(time.substring(0, 4), time.substring(0, 10), time + ".mp4")
+        default:
+            throw new Error("Invalid type: " + type)
+    }
+}
+
+async function safeStat(file: string) {
+    try {
+        return await fs.stat(file)
+    } catch (e: any) {
+        return undefined
+    }
+}
+
 async function syncFile(ctx: Context, resolved: string, type: string) {
+
+    // If the resolved file entry already exists, we can skip all this
+    const relative = path.relative(ctx.config.source, resolved)
+    const keyTime = await ctx.cache.get(relative)
+    if (keyTime && await safeStat(path.resolve(ctx.config.target, getRelativeTargetFile(keyTime, type)))) {
+        // All good, skip
+        logger.info("Skipping", relative)
+        return
+    }
+
     switch(type) {
         case "image/jpeg": {
             logger.info("Found JPEG image", resolved)
             const time = await getImageText(ctx, resolved)
             logger.info("time:", time)
-            await mkdirp(path.resolve(ctx.config.target, time.substring(0, 10)))
-            const output = path.resolve(ctx.config.target, time.substring(0, 10), time + ".jpg")
+            const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
+            await mkdirp(path.dirname(output))
             await fs.copyFile(resolved, output)
+            await ctx.cache.put(relative, time)
             break
         }
 
@@ -105,9 +135,10 @@ async function syncFile(ctx: Context, resolved: string, type: string) {
             const time = await getImageText(ctx, image)
             await fs.rm(image)
             logger.info("time:", time)
-            await mkdirp(path.resolve(ctx.config.target, time.substring(0, 10)))
-            const output = path.resolve(ctx.config.target, time.substring(0, 10), time + ".mp4")
+            const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
+            await mkdirp(path.dirname(output))
             await fs.copyFile(remuxed, output)
+            await ctx.cache.put(relative, time)
             break
         }
 
