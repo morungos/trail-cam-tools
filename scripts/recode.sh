@@ -14,6 +14,18 @@ set -x
 ## stat --format "%Y" '/home/stuart/Trail Cam/Trail cam 29th October 2025/DSCF0002.JPG'
 ## date --rfc-3339=seconds -u -d "@1756572020"
 
+## This is an evolving task. We now amend out approach as follows:
+##
+## 1. It is more like a sync than a transform, i.e., designed to be idempotent
+## 2. Files which already exist are skipped
+## 3. All files for output are tagged by date and time, not filename
+## 4. We fail when we cannot extract a date and time
+## 5. For performance, we want to cache dates and times when we can
+##
+## In an ideal world, we'd probably revert to Perl, but my Perl is 
+## extremely rusty. So, we will revert to my usual high level 
+## language and write something using TypeScript and nodejs. 
+
 INROOT=$1
 OUTROOT=$2
 
@@ -81,7 +93,7 @@ update_timestamps(){
     FORMATTED_LOCAL_DATE=`date -j -f %Y-%m-%dT%H:%M:%S ${LOCAL_DATE} +%Y:%m:%dT%H:%M:%S%z`
     FORMATTED_LOCAL_OFFSET=`date -j -f %Y-%m-%dT%H:%M:%S ${LOCAL_DATE} +%z`
 
-    FORMATTED_UTC_DATE="${FORMATTED_UTC_DATE:0:-2}:${FORMATTED_UTC_DATE: -2}"
+    FORMATTED_UTC_DATE="${FORMATTED_UTC_DATE:0:-5}"
     FORMATTED_LOCAL_DATE="${FORMATTED_LOCAL_DATE:0:-2}:${FORMATTED_LOCAL_DATE: -2}"
     FORMATTED_LOCAL_OFFSET="${FORMATTED_LOCAL_OFFSET:0:-2}:${FORMATTED_LOCAL_OFFSET: -2}"
   else
@@ -96,11 +108,11 @@ update_timestamps(){
   ##
   ## Videos are much less simple: offsets are not handled at all the same way, on a Mac anyways
   ## Also, with videos, we need to get a temporary JPEG for the first keyframe to use for the
-  ## text analysis.
+  ## text analysis
 
   if [[ "${INFILE_TYPE}" == "video/x-msvideo" ]]; then
-    echo exiftool -overwrite_original -api QuickTimeUTC '-QuickTime:CreationDate<$CreateDate' "${OUTFILE}"
-    exiftool -overwrite_original -api QuickTimeUTC '-QuickTime:CreationDate<$CreateDate' "${OUTFILE}"
+    echo exiftool -overwrite_original -api QuickTimeUTC "-QuickTime:CreateDate=${FORMATTED_LOCAL_DATE}" "-QuickTime:ModifyDate=${FORMATTED_LOCAL_DATE}" "${OUTFILE}"
+    exiftool -overwrite_original -api QuickTimeUTC "-QuickTime:CreateDate=${FORMATTED_LOCAL_DATE}" "-QuickTime:ModifyDate=${FORMATTED_LOCAL_DATE}" "${OUTFILE}"
   fi
 }
 
