@@ -15,6 +15,7 @@
   "license": "UNLICENSED",
   "packageManager": "pnpm@11.8.0",
   "devDependencies": {
+    "@types/luxon": "^3.7.2",
     "@types/mime-types": "^3.0.1",
     "@types/node": "^26.0.0",
     "ts-node": "^10.9.2",
@@ -23,6 +24,7 @@
   "dependencies": {
     "commander": "^15.0.0",
     "level": "^10.0.0",
+    "luxon": "^3.7.2",
     "mime-types": "^3.0.2",
     "mkdirp": "^3.0.1",
     "tmp-promise": "^3.0.3"

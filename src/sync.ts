@@ -6,6 +6,7 @@ import mime from 'mime-types'
 import { program } from 'commander'
 import { Level } from 'level'
 import { mkdirp } from 'mkdirp'
+import { DateTime } from 'luxon'
 
 import type { Context } from './types.d.ts'
 
@@ -106,63 +107,72 @@ async function safeStat(file: string) {
     }
 }
 
-async function writeFile(ctx: Context, file: string, relative: string, time: string, type: string) {
-    const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
+async function writeFile(ctx: Context, file: string, absolute: string, time: string, type: string) {
+    const fragment = getRelativeTargetFile(time, type)
+    const output = path.resolve(ctx.config.target, fragment)
     await mkdirp(path.dirname(output))
+
     if (await safeStat(output)) {
-        logger.warn("Skipping overwrite:", output)
+
+        // If the file exists, don't copy, but do mark as cached, so we skip re-runs
+        logger.info("Skipping; file already in target (exists):", absolute)
+        await ctx.cache.put(absolute, time)
         return
     }
+
     await fs.copyFile(file, output)
-    await ctx.cache.put(relative, time)
+    logger.info("Copying file to target:", absolute, 'as:', fragment)
+    await ctx.cache.put(absolute, time)
 }
 
-async function syncFile(ctx: Context, source: string, resolved: string, type: string) {
+async function syncFile(ctx: Context, source: string, absolute: string, type: string) {
 
     // If the resolved file entry already exists, we can skip all this
-    const relative = path.relative(source, resolved)
-    const keyTime = await ctx.cache.get(relative)
+    const relative = path.relative(source, absolute)
+    const keyTime = await ctx.cache.get(absolute)
     if (keyTime && await safeStat(path.resolve(ctx.config.target, getRelativeTargetFile(keyTime, type)))) {
         // All good, skip
-        logger.info("Skipping", relative)
+        logger.info("Skipping; file already in target (cache):", absolute)
         return
     }
+
+    logger.info("Processing; file not in target:", absolute)
 
     switch(type) {
         case "image/jpeg": {
-            logger.info("Found JPEG image", resolved)
-            const time = await getImageText(ctx, resolved)
-            logger.info("time:", time)
+            logger.info("Found JPEG image", absolute)
+            const time = await getImageText(ctx, absolute)
+            logger.info("Image timestamp:", time)
             if (time)
-                writeFile(ctx, resolved, relative, time, type)
+                await writeFile(ctx, absolute, absolute, time, type)
             break
         }
 
         case "video/mp4": {
-            logger.info("Found MP4 video", resolved)
-            const image = await getVideoImage(resolved)
+            logger.info("Found MP4 video", absolute)
+            const image = await getVideoImage(absolute)
             const time = await getImageText(ctx, image)
             await fs.rm(image)
-            logger.info("time:", time)
+            logger.info("Image timestamp:", time)
             if (time)
-                writeFile(ctx, resolved, relative, time, type)
+                await writeFile(ctx, absolute, absolute, time, type)
             break
         }
 
         case "video/x-msvideo": {
-            logger.info("Found AVI video", resolved)
-            const remuxed = await remux(resolved)
+            logger.info("Found AVI video", absolute)
+            const remuxed = await remux(absolute)
             const image = await getVideoImage(remuxed)
             const time = await getImageText(ctx, image)
             await fs.rm(image)
-            logger.info("time:", time)
+            logger.info("Image timestamp:", time)
             if (time)
-                writeFile(ctx, remuxed, relative, time, type)
+                await writeFile(ctx, remuxed, absolute, time, type)
             break
         }
 
         default:
-            logger.warn("Ignoring file:", resolved)
+            logger.warn("Ignoring file:", absolute)
             break
     }
 }
@@ -192,10 +202,117 @@ async function processContent(ctx: Context, source: string, dir: string) {
     }
 }
 
+/**
+ * Updates the file timestamps for a target file, which can be either an image
+ * or an (mp4) video.
+ * @param ctx 
+ * @param file 
+ */
+async function processTargetFile(ctx: Context, file: string) {
+    const extension = path.extname(file)
+    const type = mime.lookup(extension) || "application/octet-stream"
+    const name = path.basename(file, extension)
+
+    // Unpack the timestamp properly. TYhis is a fixed format, unlike what was
+    // in the images. Note that this is a *local* time. We now need to turn that
+    // into something we can pass to exiftool in a variety of different formats.
+
+    const local = DateTime.fromFormat(name, "yyyy-LL-dd'T'HH-mm-ss")
+    if (! local.isValid) {
+        logger.warn("Skipping target file:", file)
+        return
+    }
+
+    const utc = local.toUTC()
+
+    // Generally, we need both a local time and a UTC time in an ISO-like format,
+    // formatted for EXIF
+
+    const localTime = local.toFormat("yyyy:LL:dd'T'HH:mm:ss")
+    const utcTime = utc.toFormat("yyyy:LL:dd'T'HH:mm:ss")
+    const localOffset = local.toFormat("ZZ")
+
+    // Now we can generate and run the exiftool commands, depending on the file type
+    switch(type) {
+        case "image/jpeg": {
+            logger.info("Updating JPEG image", file)
+
+            await exec("exiftool", [
+                "-overwrite_original", '-Make=Trail Camera', '-Model=SV-TCZ23LSW',
+                `-AllDates=${localTime}`,
+                `-EXIF:OffsetTime*=${localOffset}`,
+                `${file}`
+            ])
+
+            break
+        }
+
+        // This bit is tricky, if we want compatibility with Apple Photos and
+        // other things. We are not there yet with that. 
+
+        case "video/mp4": {
+            logger.info("Updating MP4 video", file)
+
+            await exec("exiftool", [
+                "-overwrite_original", 
+                '-EXIF:Make=Trail Camera', 
+                '-EXIF:Model=SV-TCZ23LSW',
+                `-EXIF:DateTimeOriginal=${localTime}`,
+                `-EXIF:CreateDate=${localTime}`,
+                `-EXIF:ModifyDate=${localTime}`,
+                '-QuickTime:Make=Trail Camera', 
+                '-QuickTime:Model=SV-TCZ23LSW',
+                '-QuickTime:Comment=SV-TCZ23LSW',
+                `-QuickTime:CreateDate=${utcTime}`,
+                `-QuickTime:ModifyDate=${utcTime}`,
+                `-QuickTime:TrackCreateDate=${utcTime}`,
+                `-QuickTime:TrackModifyDate=${utcTime}`,
+                `-QuickTime:MediaCreateDate=${utcTime}`,
+                `-QuickTime:MediaModifyDate=${utcTime}`,
+                `${file}`
+            ])
+
+            break
+        }
+
+        default:
+            logger.warn("Ignoring file:", file)
+            break
+    }
+}
+
+async function processTarget(ctx: Context, dir: string) {
+    const directory = dir
+    const files = await fs.readdir(directory, {
+        withFileTypes: true,
+        recursive: false
+    })
+    let i = 0
+    for(const entry of files) {
+        if (entry.isDirectory()) {
+            logger.info("Found directory", path.resolve(dir, entry.name))
+            await processTarget(ctx, path.resolve(dir, entry.name))
+        }
+        if (! entry.isFile()) {
+            continue
+        }
+        await processTargetFile(ctx, path.resolve(dir, entry.name))
+    }
+}
+
+// Now, for the final attempt, let's handle things as we need for video
+// according to how the Canon system works, and we know it does work. 
+
 async function sync(ctx: Context) {
+
+    // First ensure the sources are reformatted into the target
     for(let s of ctx.config.sources) {
         await processContent(ctx, s, s)
     }
+
+    // And then update the timestamps as needed
+    await processTarget(ctx, ctx.config.target)
+    
 }
 
 sync(makeContext())
