@@ -14,8 +14,8 @@ import logger from './logger'
 import { extract } from './extract';
 
 program
-    .argument('<source>')
-    .argument('<target>')
+    .requiredOption('-t, --target <dir>', 'target directory is required')
+    .requiredOption('-s, --source <dirs...>', 'at least one source directory is required')
 
 // For persistence, we will use level. That's enough: all we need is a key value
 // store with a JSON data block containing a timestamp and extracted (raw) text.
@@ -31,12 +31,13 @@ program
 function makeContext(): Context {
 
     program.parse()
+
     const cache = new Level('.text-cache', { valueEncoding: 'json' })
 
     return {
         config: {
-            source: program.args[0],
-            target: program.args[1],
+            sources: program.opts().source,
+            target: program.opts().target,
         },
         cache: cache
     };
@@ -82,14 +83,14 @@ async function getImageText(ctx: Context, file: string) {
         return `${ match[3] }-${ match[2] }-${ match[1] }T${ match[4] }-${ match[5] }-${ match[6] }`
     }
 
-    logger.warn("match fail:", text)
-    process.exit(1)
+    logger.warn("match fail:", text, "for:", file)
 }
 
 function getRelativeTargetFile(time: string, type: string) {
     switch(type) {
         case "image/jpeg":
             return path.join(time.substring(0, 4), time.substring(0, 10), time + ".jpg")
+        case "video/mp4":
         case "video/x-msvideo":
             return path.join(time.substring(0, 4), time.substring(0, 10), time + ".mp4")
         default:
@@ -105,10 +106,21 @@ async function safeStat(file: string) {
     }
 }
 
-async function syncFile(ctx: Context, resolved: string, type: string) {
+async function writeFile(ctx: Context, file: string, relative: string, time: string, type: string) {
+    const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
+    await mkdirp(path.dirname(output))
+    if (await safeStat(output)) {
+        logger.warn("Skipping overwrite:", output)
+        return
+    }
+    await fs.copyFile(file, output)
+    await ctx.cache.put(relative, time)
+}
+
+async function syncFile(ctx: Context, source: string, resolved: string, type: string) {
 
     // If the resolved file entry already exists, we can skip all this
-    const relative = path.relative(ctx.config.source, resolved)
+    const relative = path.relative(source, resolved)
     const keyTime = await ctx.cache.get(relative)
     if (keyTime && await safeStat(path.resolve(ctx.config.target, getRelativeTargetFile(keyTime, type)))) {
         // All good, skip
@@ -121,10 +133,19 @@ async function syncFile(ctx: Context, resolved: string, type: string) {
             logger.info("Found JPEG image", resolved)
             const time = await getImageText(ctx, resolved)
             logger.info("time:", time)
-            const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
-            await mkdirp(path.dirname(output))
-            await fs.copyFile(resolved, output)
-            await ctx.cache.put(relative, time)
+            if (time)
+                writeFile(ctx, resolved, relative, time, type)
+            break
+        }
+
+        case "video/mp4": {
+            logger.info("Found MP4 video", resolved)
+            const image = await getVideoImage(resolved)
+            const time = await getImageText(ctx, image)
+            await fs.rm(image)
+            logger.info("time:", time)
+            if (time)
+                writeFile(ctx, resolved, relative, time, type)
             break
         }
 
@@ -135,10 +156,8 @@ async function syncFile(ctx: Context, resolved: string, type: string) {
             const time = await getImageText(ctx, image)
             await fs.rm(image)
             logger.info("time:", time)
-            const output = path.resolve(ctx.config.target, getRelativeTargetFile(time, type))
-            await mkdirp(path.dirname(output))
-            await fs.copyFile(remuxed, output)
-            await ctx.cache.put(relative, time)
+            if (time)
+                writeFile(ctx, remuxed, relative, time, type)
             break
         }
 
@@ -150,8 +169,8 @@ async function syncFile(ctx: Context, resolved: string, type: string) {
 
 // The main top level function, which iterates through directories 
 // searching for data.
-async function processContent(ctx: Context, source: string) {
-    const directory = source
+async function processContent(ctx: Context, source: string, dir: string) {
+    const directory = dir
     const files = await fs.readdir(directory, {
         withFileTypes: true,
         recursive: false
@@ -159,8 +178,8 @@ async function processContent(ctx: Context, source: string) {
     let i = 0
     for(const entry of files) {
         if (entry.isDirectory()) {
-            logger.info("Found directory", entry.name)
-            await processContent(ctx, path.resolve(source, entry.name))
+            logger.info("Found directory", path.resolve(dir, entry.name))
+            await processContent(ctx, source, path.resolve(dir, entry.name))
         }
         if (! entry.isFile()) {
             continue
@@ -169,12 +188,14 @@ async function processContent(ctx: Context, source: string) {
         const type = mime.lookup(extension) || "application/octet-stream"
         const resolved = path.join(entry.parentPath, entry.name)
 
-        await syncFile(ctx, resolved, type)
+        await syncFile(ctx, source, resolved, type)
     }
 }
 
 async function sync(ctx: Context) {
-    await processContent(ctx, ctx.config.source)
+    for(let s of ctx.config.sources) {
+        await processContent(ctx, s, s)
+    }
 }
 
 sync(makeContext())

@@ -1,7 +1,7 @@
 import type { Level } from 'level'
 
 export type ConfigData = {
-    source: string,
+    sources: string[],
     target: string,
 }
 
