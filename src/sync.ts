@@ -44,17 +44,18 @@ function makeContext(): Context {
     };
 }
 
-async function getFileKey(ctx: Context, file: string, type: string) {
-
-}
-
+/**
+ * Remux the video file from AVI and its oddness. 
+ * @param file 
+ * @returns 
+ */
 async function remux(file: string): Promise<string> {
     
     const audio = await tmpName({ postfix: '.pcm'})
     const video = await tmpName({ postfix: '.h264'})
     const mp4 = await tmpName({ postfix: '.mp4'})
     await exec("gpac", ["-i", file, "-o", audio, "-o", video])
-    await exec("ffmpeg", ["-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-r", "25", "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
+    await exec("ffmpeg", ["-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-r", "30", "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
 
     // remove the image scratch file
     await fs.rm(audio)
