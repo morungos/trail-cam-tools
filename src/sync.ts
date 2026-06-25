@@ -51,15 +51,18 @@ function makeContext(): Context {
  */
 async function remux(file: string): Promise<string> {
     
-    const audio = await tmpName({ postfix: '.pcm'})
-    const video = await tmpName({ postfix: '.h264'})
+    // const audio = await tmpName({ postfix: '.pcm'})
+    const intermediate = await tmpName({ postfix: '.mp4'})
     const mp4 = await tmpName({ postfix: '.mp4'})
-    await exec("gpac", ["-i", file, "-o", audio, "-o", video])
-    await exec("ffmpeg", ["-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-r", "30", "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
+    // await exec("gpac", ["-i", file, "-o", audio, "-o", video])
+    // await exec("ffmpeg", ["-hide_banner", "-y", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", audio, "-r", "30", "-i", video, "-c:v", "copy", "-c:a", "aac", mp4])
+
+    await exec("gpac", ["-i", file, "-o", intermediate])
+    await exec("ffmpeg", ["-hide_banner", "-y", "-i", intermediate, "-c:v", "copy", "-c:a", "aac", mp4])
 
     // remove the image scratch file
-    await fs.rm(audio)
-    await fs.rm(video)
+    // await fs.rm(audio)
+    await fs.rm(intermediate)
 
     return mp4
 }
@@ -169,6 +172,7 @@ async function syncFile(ctx: Context, source: string, absolute: string, type: st
             logger.info("Image timestamp:", time)
             if (time)
                 await writeFile(ctx, remuxed, absolute, time, type)
+            await fs.rm(remuxed)
             break
         }
 
